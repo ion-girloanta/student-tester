@@ -1,17 +1,124 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
+import { generateImage,  getNews} from "../function/resource";
 
-/*== STEP 1 ===============================================================
-The section below creates a Todo database table with a "content" field. Try
-adding a new "isDone" field as a boolean. The authorization rule below
-specifies that any user authenticated via an API key can "create", "read",
-"update", and "delete" any "Todo" records.
-=========================================================================*/
 const schema = a.schema({
+  // === Todo-style Relational Database ===
   Todo: a
     .model({
       content: a.string(),
+      isDone: a.boolean(),
     })
     .authorization((allow) => [allow.publicApiKey()]),
+
+  // === Bedrock Integration via AI & Tools ===
+  Story: a
+    .model({
+      title: a.string().required(),
+      story: a.string().required(),
+    })
+    .authorization((allow) => [allow.authenticated()]),
+
+  chat: a
+    .conversation({
+      aiModel: a.ai.model("Claude 3 Sonnet"),
+      systemPrompt:
+        "You are a story telling finder. You will assist " +
+        "the user in finding a story that matches the story string, " +
+        "title string or id.",
+      tools: [
+        a.data.modelTool({
+          name: "listStories",
+          description: "List all stories from the Story model.",
+          model: a.ref("Story"),
+          operation: "list",
+        }),
+        a.data.queryTool({
+          name: "getNews",
+          description: "Help generate a story prompt using the current news.",
+          query: a.ref("getNews"),
+        }),
+        a.data.queryTool({
+          name: "knowledgeBase",
+          description:
+            "Used to search a knowledge base of style dictionary documentation.",
+          query: a.ref("knowledgeBase"),
+        }),
+      ],
+    })
+    .authorization((allow) => allow.owner()),
+
+  summarizer: a
+    .generation({
+      aiModel: a.ai.model("Claude 3 Sonnet"),
+      systemPrompt:
+        "You are a helpful assistant that summarizes stories in one or two sentences.",
+      inferenceConfiguration: {
+        temperature: 0.7,
+        topP: 1,
+        maxTokens: 400,
+      },
+    })
+    .arguments({
+      story: a.string(),
+    })
+    .returns(
+      a.customType({
+        summary: a.string(),
+      })
+    )
+    .authorization((allow) => [allow.authenticated()]),
+
+  generateStory: a
+    .generation({
+      aiModel: a.ai.model("Claude 3 Sonnet"),
+      systemPrompt:
+        "Generate a story and a title that's fun and exciting with a cliffhanger.",
+    })
+    .arguments({
+      description: a.string(),
+    })
+    .returns(
+      a.customType({
+        story: a.string().required(),
+        title: a.string().required(),
+      })
+    )
+    .authorization((allow) => allow.authenticated()),
+
+  generateImage: a
+    .query()
+    .arguments({
+      prompt: a.string(),
+    })
+    .returns(a.string().array())
+    .handler(a.handler.function(generateImage))
+    .authorization((allow) => [allow.authenticated()]),
+
+  getNews: a
+    .query()
+    .arguments({
+      category: a.string(),
+    })
+    .returns(
+      a.customType({
+        title: a.string(),
+        description: a.string(),
+      })
+    )
+    .authorization((allow) => allow.authenticated())
+    .handler(a.handler.function(getNews)),
+
+  knowledgeBase: a
+    .query()
+    .arguments({ input: a.string() })
+    .handler(
+      a.handler.custom({
+        dataSource: "KnowledgeBaseDataSource",
+        entry: "./kbResolver.js",
+      })
+    )
+    .returns(a.string())
+    .authorization((allow) => [allow.authenticated()]),
 });
 
 export type Schema = ClientSchema<typeof schema>;
@@ -19,39 +126,9 @@ export type Schema = ClientSchema<typeof schema>;
 export const data = defineData({
   schema,
   authorizationModes: {
-    defaultAuthorizationMode: "apiKey",
-    // API Key is used for a.allow.public() rules
+    defaultAuthorizationMode: "userPool",
     apiKeyAuthorizationMode: {
       expiresInDays: 30,
     },
   },
 });
-
-/*== STEP 2 ===============================================================
-Go to your frontend source code. From your client-side code, generate a
-Data client to make CRUDL requests to your table. (THIS SNIPPET WILL ONLY
-WORK IN THE FRONTEND CODE FILE.)
-
-Using JavaScript or Next.js React Server Components, Middleware, Server 
-Actions or Pages Router? Review how to generate Data clients for those use
-cases: https://docs.amplify.aws/gen2/build-a-backend/data/connect-to-API/
-=========================================================================*/
-
-/*
-"use client"
-import { generateClient } from "aws-amplify/data";
-import type { Schema } from "@/amplify/data/resource";
-
-const client = generateClient<Schema>() // use this Data client for CRUDL requests
-*/
-
-/*== STEP 3 ===============================================================
-Fetch records from the database and use them in your frontend component.
-(THIS SNIPPET WILL ONLY WORK IN THE FRONTEND CODE FILE.)
-=========================================================================*/
-
-/* For example, in a React component, you can use this snippet in your
-  function's RETURN statement */
-// const { data: todos } = await client.models.Todo.list()
-
-// return <ul>{todos.map(todo => <li key={todo.id}>{todo.content}</li>)}</ul>
